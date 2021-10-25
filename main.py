@@ -1,102 +1,110 @@
 from __future__ import (absolute_import, division, print_function,
                         unicode_literals)
-
 import datetime
+from os import spawnl
 import os.path
 import sys
 
 import backtrader as bt
 
-class TestStrategy(bt.Strategy):
+'''
+    数据清洗：
+        删除抖动点
+
+    趋势: (时间跨度变化幅度，曲线斜率，时间跨度)
+'''
+class TrendStrategy(bt.Strategy):
+    params = dict(buyRateStd = 0.005, statSpan = 8, stopSurplusStd = 0.1, stopLossStd = -0.08, positionDuration = 10)
 
     def log(self, txt, dt=None):
-        ''' Logging function fot this strategy'''
-        dt = dt or self.datas[0].datetime.date(0)
+        dt = dt or self.data.datetime.date(0)
         print('%s, %s' % (dt.isoformat(), txt))
 
     def __init__(self):
-        # Keep a reference to the "close" line in the data[0] dataseries
-        self.dataclose = self.datas[0].close
+        now = self.data.openinterest[0]
+        statSpanBegin = self.data.openinterest(-1 * self.params.statSpan)
+        self.percent = (now - statSpanBegin) * 1.0 / now
 
-        # To keep track of pending orders
         self.order = None
+        self.buyPrice = None
+
+    def next(self):
+        #self.log('Close, %.2f' % self.data.close[0])
+        
+        if self.order:
+            return
+        
+        # 没有持仓
+        if not self.position:
+            if self.percent > self.params.buyRateStd:
+                self.order = self.buy()
+                self.log('trigger Buy, %d, %f' % (len(self), self.data.open[0]))
+        else:
+            stopSurplus = False
+            stopLoss = False
+
+            gain_price = self.data.openinterest[0] - self.buyPrice
+            gain_percent = gain_price * 1.0 / self.buyPrice
+            
+            if (gain_price > 0 and gain_percent > self.params.stopSurplusStd):
+                stopSurplus = True
+            elif(gain_price < 0 and gain_percent > self.params.stopLossStd):
+                stopLoss = True
+
+            if len(self) >= (self.bar_executed + self.params.positionDuration) or (stopSurplus or stopLoss):
+                self.order = self.sell()
+                self.log('trigger Sell, %d, %f' % (len(self), self.data.open[0]))            
 
     def notify_order(self, order):
         if order.status in [order.Submitted, order.Accepted]:
-            # Buy/Sell order submitted/accepted to/by broker - Nothing to do
             return
 
-        # Check if an order has been completed
-        # Attention: broker could reject order if not enough cash
         if order.status in [order.Completed]:
             if order.isbuy():
-                self.log('BUY EXECUTED, %.2f' % order.executed.price)
+                self.log('BUY EXECUTED, %f' % order.executed.price)
             elif order.issell():
                 self.log('SELL EXECUTED, %.2f' % order.executed.price)
 
             self.bar_executed = len(self)
-
+            self.buyPrice = self.data.close[0]
+            
         elif order.status in [order.Canceled, order.Margin, order.Rejected]:
             self.log('Order Canceled/Margin/Rejected')
 
-        # Write down: no pending order
         self.order = None
-
-    def next(self):
-        # Simply log the closing price of the series from the reference
-        self.log('Close, %.2f' % self.dataclose[0])
-
-        # Check if an order is pending ... if yes, we cannot send a 2nd one
-        if self.order:
-            return
-
-        # Check if we are in the market
-        if not self.position:
-
-            # Not yet ... we MIGHT BUY if ...
-            if self.dataclose[0] < self.dataclose[-1]:
-                    # current close less than previous close
-
-                    if self.dataclose[-1] < self.dataclose[-2]:
-                        # previous close less than the previous close
-
-                        # BUY, BUY, BUY!!! (with default parameters)
-                        self.log('BUY CREATE, %.2f' % self.dataclose[0])
-
-                        # Keep track of the created order to avoid a 2nd order
-                        self.order = self.buy()
-
-        else:
-
-            # Already in the market ... we might sell
-            if len(self) >= (self.bar_executed + 5):
-                # SELL, SELL, SELL!!! (with all possible default parameters)
-                self.log('SELL CREATE, %.2f' % self.dataclose[0])
-
-                # Keep track of the created order to avoid a 2nd order
-                self.order = self.sell()
+   
+class SizerFix(bt.SizerBase):
+    params = (('stake', 1), )
 
 if __name__ == '__main__':
     cerebro = bt.Cerebro()
     
-    cerebro.addstrategy(TestStrategy)
+    cerebro.addstrategy(TrendStrategy)
+    cerebro.addsizer(bt.sizers.SizerFix, stake = 200)
 
     modpath = os.path.dirname(os.path.abspath(sys.argv[0]))
     datapath = os.path.join(modpath, '..\\backtrader\datas\orcl-1995-2014.txt')
 
-    print(datapath)
-    data = bt.feeds.YahooFinanceCSVData(
+    data = bt.feeds.GenericCSVData(
         dataname=datapath,
-        # Do not pass values before this date
         fromdate=datetime.datetime(2000, 1, 1),
-        # Do not pass values after this date
-        todate=datetime.datetime(2000, 12, 31),
-        reverse=False)
+        todate=datetime.datetime(2000, 3, 30),
+        dtformat=('%Y-%m-%d'),
+        datetime=0,
+        open=1,
+        high=2,
+        low=3,
+        close=4,
+        openinterest=5,
+        volume=6,
+        reverse=False,
+        separator=",",
+        headers=True)
     
     cerebro.adddata(data)
 
-    cerebro.broker.setcash(100000.0)
-    cerebro.broker.setcommission(commission=0.001)
+    cerebro.broker.setcash(10000.0)
+    cerebro.broker.setcommission(commission=0.01)
     
     print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
 
