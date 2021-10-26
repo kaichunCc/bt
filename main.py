@@ -27,6 +27,7 @@ class TrendStrategy(bt.Strategy):
 
         self.order = None
         self.buyPrice = None
+        self.gain = 0
 
     def next(self):
         #self.log('Close, %.2f' % self.data.close[0])
@@ -38,7 +39,7 @@ class TrendStrategy(bt.Strategy):
         if not self.position:
             if self.percent > self.params.buyRateStd:
                 self.order = self.buy()
-                self.log('trigger Buy, %d, %f' % (len(self), self.data.open[0]))
+                self.log('trigger Buy')
         else:
             stopSurplus = False
             stopLoss = False
@@ -53,7 +54,7 @@ class TrendStrategy(bt.Strategy):
 
             if len(self) >= (self.bar_executed + self.params.positionDuration) or (stopSurplus or stopLoss):
                 self.order = self.sell()
-                self.log('trigger Sell, %d, %f' % (len(self), self.data.open[0]))            
+                self.log('trigger Sell')            
 
     def notify_order(self, order):
         if order.status in [order.Submitted, order.Accepted]:
@@ -63,7 +64,9 @@ class TrendStrategy(bt.Strategy):
             if order.isbuy():
                 self.log('BUY EXECUTED, %f' % order.executed.price)
             elif order.issell():
-                self.log('SELL EXECUTED, %.2f' % order.executed.price)
+                self.log('SELL EXECUTED, %.2f' % (order.executed.price))
+                
+                self.gain += order.executed.pnl
 
             self.bar_executed = len(self)
             self.buyPrice = self.data.close[0]
@@ -80,7 +83,7 @@ if __name__ == '__main__':
     cerebro = bt.Cerebro()
     
     cerebro.addstrategy(TrendStrategy)
-    cerebro.addsizer(bt.sizers.SizerFix, stake = 200)
+    cerebro.addsizer(bt.sizers.SizerFix, stake = 300)
 
     modpath = os.path.dirname(os.path.abspath(sys.argv[0]))
     datapath = os.path.join(modpath, '..\\backtrader\datas\orcl-1995-2014.txt')
@@ -104,10 +107,12 @@ if __name__ == '__main__':
     cerebro.adddata(data)
 
     cerebro.broker.setcash(10000.0)
-    cerebro.broker.setcommission(commission=0.01)
+    cerebro.broker.setcommission(commission=0.0001)
     
     print('Starting Portfolio Value: %.2f' % cerebro.broker.getvalue())
 
     cerebro.run()
 
     print('Finnal Portfolio Value: %.2f' % cerebro.broker.getvalue())
+
+    cerebro.plot()

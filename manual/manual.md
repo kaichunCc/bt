@@ -67,3 +67,10 @@ f.close()
 ```
 #print(self.position.__dict__)
 ```
+
+## FAQ
+### matplotlib version 3.2.2
+```
+pip uninstall matplotlib
+pip install matplotlib==3.2.2
+```
